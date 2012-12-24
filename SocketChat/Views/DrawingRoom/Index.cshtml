@@ -1,0 +1,87 @@
+﻿@{
+    Layout = null;
+}
+
+<!DOCTYPE html>
+
+<html style="overflow: hidden;">
+<head>
+    <title>Drawing Room</title>
+    <script src="@Url.Content("~/Scripts/jquery-1.8.2.min.js")" type="text/javascript"></script>
+    <script src="@Url.Content("~/Scripts/jquery.signalR-0.5.3.min.js")" type="text/javascript"></script>
+</head>
+<body>
+    <script type="text/javascript">
+        function drawLine(context, from, to) {
+            context.beginPath();
+            context.moveTo(from.x, from.y);
+            context.lineTo(to.x, to.y);
+            context.stroke();
+        }
+
+        $(function () {
+            debugger;
+            var context = document.getElementById('canvas').getContext('2d');
+            var drawConnection = $.connection("Data/Drawing/Pipe");
+
+            drawConnection.received(function (data) {
+                data = JSON.parse(data);
+                if (data.s != drawConnection.id) {
+                    var oldStyle = context.strokeStyle;
+                    var oldWidth = context.lineWidth;
+                    context.strokeStyle = data.c;
+                    context.lineWidth = data.w;
+                    drawLine(context, data.f, data.t);
+                    context.strokeStyle = oldStyle;
+                    context.lineWidth = oldWidth;
+                }
+            });
+
+            drawConnection.start();
+
+            var draw = false;
+
+            var lastPoint;
+            var offset = $('#canvas').offset();
+            context.lineWidth = 1;
+            var body = $('body');
+
+            body.mousedown(function () {
+                draw = true;
+            });
+
+            body.mouseup(function () {
+                draw = false;
+            });
+
+            body.mousemove(function (event) {
+                if (!draw) {
+                    lastPoint = null;
+                    return;
+                }
+                var point = { x: (event.pageX - offset.left), y: (event.pageY - offset.top) };
+                if (lastPoint !== undefined && lastPoint !== null) {
+                    drawLine(context, lastPoint, point);
+                    drawConnection.send(JSON.stringify({ s: drawConnection.id, c: context.strokeStyle, w: context.lineWidth, f: lastPoint, t: point }));
+                }
+                lastPoint = point;
+            }).mouseleave(function (event) {
+                lastPoint = null;
+            });
+
+            $("#colorPicker").on("change", function () {
+                context.strokeStyle = this.value;
+            });
+
+            $("#lineWidthPicker").on("change", function () {
+                context.lineWidth = parseInt(this.value);
+            });
+        });
+    </script>
+    <div>
+        <canvas id="canvas" width="500" height="500" style="cursor: crosshair !important;"></canvas><br />
+        <label for="colorPicker">Select Color: </label><input type="color" id="colorPicker" value="#000000" />
+        <label for="colorPicker">Line Width: </label><input type="number" id="lineWidthPicker" value="1" min="1" />
+    </div>
+</body>
+</html>

@@ -1,0 +1,346 @@
+﻿@{
+    ViewBag.Title = "Chat";
+}
+<style type="text/css">
+    .userBox
+    {
+        background-color: #7EA700;
+        text-align: center;
+        vertical-align: middle;
+        padding: 12px 2px 12px 2px;
+        margin: 2px;
+        color: white;
+        font-weight: bold;
+    }
+    
+    #roomsBox
+    {
+        width: 200px;
+        vertical-align: top;
+        text-align: center;
+    }
+    
+    #rooms div
+    {
+        background-color: lightBlue;
+        padding: 12px 2px 12px 2px;
+        margin: 2px;
+        font-weight: bold;
+        cursor: pointer;
+    }
+    
+    #rooms div span
+    {
+        float: right;
+        margin-right: 10px;
+        background-color: white;
+        padding: 3px;
+        margin-top: -3px;
+    }
+    
+    .tabBox
+    {
+        height: 382px;
+        overflow: auto;
+    }
+    
+    .messageBoxItem
+    {
+        padding: 5px;
+        background-color: lightBlue;
+        margin: 2px;
+    }
+    
+    .messageBoxItem .messageHead
+    {
+        font-weight: bold;
+    }
+    
+    .messageBoxItem .messageContent
+    {
+        margin-left: 10px;
+        font-style: italic;
+    }
+</style>
+<script src="@Url.Content("~/Scripts/modernizr-1.7.min.js")" type="text/javascript"></script>
+<script src="@Url.Content("~/Scripts/jquery.signalR-0.5.3.min.js")" type="text/javascript"></script>
+<div id="loginWindow">
+    <label for="loginName">
+        Nickname:</label>
+    <input type="text" id="loginName" />
+    <input id="loginButton" type="button" value="Login" />
+</div>
+<table style="width: 100%;">
+    <tr style="height: 450px;">
+        <td>
+            <div id="openedRooms" style="height: 436px;">
+            </div>
+        </td>
+        <td id="roomsBox">
+            <div id="rooms">
+            </div>
+        </td>
+    </tr>
+    <tr style="height: 50px;">
+        <td>
+            <textarea id="messageTextArea" rows="3" cols="20" style="width: 100%; height: 100%;"
+                placeholder="Enter message..."></textarea>
+        </td>
+        <td>
+            <table>
+                <tr>
+                    <td>
+                        <input type="text" placeholder="Room name..." id="newRoomNameTb" />
+                    </td>
+                    <td>
+                        <input type="button" value="Create Room" id="createRoomBtn" />
+                    </td>
+                </tr>
+            </table>
+        </td>
+    </tr>
+</table>
+<script type="text/javascript">
+    var userName;
+    var connection;
+    var openedRoomsTabStrip;
+
+    function dataRecieved(data) {
+        if (data.messagetype) {
+            if (data.messagetype == "joined") {
+                var partisipantsElement = $("#room" + data.roomId + " span");
+                var partisipantsCount = parseInt(partisipantsElement.html());
+                partisipantsElement.html(partisipantsCount + 1);
+                if (data.connectionid != connection.id) {
+                    var tabIndex = getRoomIndexByRoomId(data.roomId);
+                    if (tabIndex != -1) {
+                        var tabContentElement = $(openedRoomsTabStrip.contentElement(tabIndex));
+                        var usersElement = $(".usersBox", tabContentElement);
+                        var userTemplate = kendo.template($("#userTemplate").html());
+                        usersElement.append(userTemplate({ UserName: data.username, ConnectionId: data.connectionid }));
+                    }
+                }
+            }
+            else if (data.messagetype == "left") {
+                var partisipantsElement = $("#room" + data.roomId + " span");
+                var partisipantsCount = parseInt(partisipantsElement.html());
+                partisipantsElement.html(partisipantsCount - 1);
+
+                if (data.connectionid != connection.id) {
+                    var tabIndex = getRoomIndexByRoomId(data.roomId);
+                    if (tabIndex != -1) {
+                        var tabContentElement = $(openedRoomsTabStrip.contentElement(tabIndex));
+                        var usersElement = $(".usersBox", tabContentElement);
+                        $("div.userBox[data-connectionid='" + data.connectionid + "']", usersElement).remove();
+                    }
+                }
+            }
+            else if (data.messagetype == "roomCreated") {
+                var roomTemplate = kendo.template($("#roomTemplate").html());
+                $("#rooms").append(roomTemplate({ Id: data.id, Name: data.name, PartisipantsCount: 1 }));
+
+                if (data.connectionid == connection.id) {
+                    var tabIndex = createTab(data.id, data.name);
+                    createInitialTabContent(tabIndex, [{ UserName: userName, ConnectionId: connection.id }]);
+                }
+            }
+        }
+        else {
+            //alert("Recieved message: " + data.RoomId + " " + data.UserName + " " + data.Message);
+            var tabIndex = getRoomIndexByRoomId(data.RoomId);
+            if (tabIndex != -1) {
+                var tabContentElement = $(openedRoomsTabStrip.contentElement(tabIndex));
+                var messageTemplate = kendo.template($("#messageTemplate").html());
+                var messagesElement = $(".messagesBox", tabContentElement);
+                messagesElement.append(messageTemplate(data));
+                var messagesDomElement = messagesElement[0];
+                messagesDomElement.scrollTop = messagesDomElement.scrollHeight;
+            }
+        }
+    }
+
+    $(function () {
+        var window = $("#loginWindow").kendoWindow({
+            title: "Login",
+            modal: true,
+            resizable: false
+        }).data("kendoWindow").center();
+
+        $("#loginButton").on("click", function (e) {
+            e.preventDefault();
+            userName = $("#loginName").val();
+            if (userName && userName != "") {
+                connection = $.connection("Data/Messages/Pipe");
+
+                connection.received(function (data) {
+                    dataRecieved(JSON.parse(data));
+                });
+
+                connection.start(function () {
+                    initLayout();
+                    window.close();
+                });
+            }
+        });
+    });
+
+    function onTabSelected(e) {
+        var roomId = $(e.item).data("roomid");
+        $("#messageTextArea").data("roomid", roomId);
+    }
+
+    function initLayout() {
+        openedRoomsTabStrip = $("#openedRooms").kendoTabStrip({
+            select: onTabSelected
+        }).data("kendoTabStrip");
+        $.get("/Data/GetRooms",
+            function (rooms) {
+                var roomTemplate = kendo.template($("#roomTemplate").html());
+                var roomsMarkup = "";
+                for (var i = 0; i < rooms.length; i++) {
+                    var room = rooms[i];
+                    roomsMarkup += roomTemplate(room);
+                }
+                $("#rooms").html(roomsMarkup);
+            }
+        );
+
+        $("#createRoomBtn").on("click", function (e) {
+            e.preventDefault();
+            var roomNameTb = $("#newRoomNameTb");
+            var newRoomName = roomNameTb.val();
+            if (newRoomName && newRoomName != "") {
+                $.get("/Data/CreateRoom",
+                { "roomName": newRoomName, "ConnectionId": connection.id, "UserName": userName },
+                function () {
+                    roomNameTb.val("");
+                }
+            );
+            }
+        });
+
+        var messageTextArea = $("#messageTextArea");
+        messageTextArea.keypress(function (e) {
+            if (e.which == 13) {
+                e.preventDefault();
+                var roomId = messageTextArea.data("roomid");
+                var message = messageTextArea.val();
+
+                connection.send(JSON.stringify({ RoomId: roomId, UserName: userName, Message: message }));
+                messageTextArea.val("");
+            }
+        });
+    }
+
+    function getRoomIndexByRoomId(roomId) {
+        var tabItems = openedRoomsTabStrip.items();
+        for (var i = 0; i < tabItems.length; i++) {
+            var tabItem = $(tabItems[i]);
+            if (tabItem.data("roomid") == roomId) {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    function leaveChat(sender) {
+        var tabItem = $(sender).parent().parent();
+        var roomId = tabItem.data("roomid");
+
+        $.get("/Data/LeaveRoom",
+            { roomId: roomId, UserName: userName, ConnectionId: connection.id },
+            function () {
+                openedRoomsTabStrip.remove(tabItem); 
+            });
+    }
+
+    function createTab(roomId, roomName) {
+        openedRoomsTabStrip.append({
+            encoded: false,
+            text: roomName + "<a href='javascript:void(0)' onclick='leaveChat(this)'><img src='/images/close.png' /></a>",
+            content: "<div></div>"
+        });
+
+        var allTabs = openedRoomsTabStrip.items();
+        var tabIndex = allTabs.length - 1;
+        var newTab = allTabs[tabIndex];
+        $(newTab).data("roomid", roomId);
+        openedRoomsTabStrip.select(newTab);
+
+        return tabIndex;
+    }
+
+    function createInitialTabContent(tabIndex, usersInRoom) {
+        var usersMarkup = "";
+        var userTemplate = kendo.template($("#userTemplate").html());
+        for (var i = 0; i < usersInRoom.length; i++) {
+            var user = usersInRoom[i];
+            usersMarkup += userTemplate(user);
+        }
+        var userHolderTemplate = kendo.template($("#usersHolder").html());
+        var usersHolderMarkup = userHolderTemplate({ content: usersMarkup });
+        var messagesHolderTemplate = kendo.template($("#messagesHolder").html());
+        var messagesHolderMarkup = messagesHolderTemplate({ content: "" });
+        var tabContentElement = openedRoomsTabStrip.contentElement(tabIndex);
+        tabContentElement.innerHTML = ("<div class='tabBox'>" + messagesHolderMarkup + usersHolderMarkup + "</div>");
+    }
+
+    function joinRoom(sender) {
+        var roomElement = $(sender);
+        var roomId = roomElement.data("roomid");
+        var roomName = roomElement.data("roomname");
+
+        var tabIndex = getRoomIndexByRoomId(roomId);
+        if (tabIndex != -1) {
+            var targetTab = openedRoomsTabStrip.items()[tabIndex];
+            openedRoomsTabStrip.select(targetTab);
+
+            return;
+        }
+
+        tabIndex = createTab(roomId, roomName);
+
+        $.get("/Data/JoinToRoom",
+            { "roomId": roomId, "ConnectionId": connection.id, "UserName": userName },
+            function (usersInRoom) {
+                createInitialTabContent(tabIndex, usersInRoom);
+            }
+        );
+    }
+
+
+</script>
+<script type="text/x-kendo-template" id="roomTemplate">
+    <div id="room#=Id#" data-roomid="#=Id#" data-roomName="#=Name#" onclick="joinRoom(this)">
+        #=Name#
+        <span>
+            #=PartisipantsCount#
+        </span>
+    </div>
+</script>
+<script type="text/x-kendo-template" id="userTemplate">
+    <div data-connectionId="#=ConnectionId#" class="userBox" >
+        #=UserName#
+    </div>
+</script>
+<script type="text/x-kendo-template" id="usersHolder">
+    <div style="float:right;width:150px;" class="tabBox usersBox">
+        #=content#
+    </div>
+</script>
+<script type="text/x-kendo-template" id="messagesHolder">
+    <div style="float:left;width:537px;" class="tabBox messagesBox">
+        #=content#
+    </div>
+</script>
+<script type="text/x-kendo-template" id="messageTemplate">
+    <div class="messageBoxItem">
+        <div class="messageHead">
+            #=UserName# said:
+        </div>
+        <div class="messageContent">
+            #=Message#
+        </div>
+    </div>
+</script>
